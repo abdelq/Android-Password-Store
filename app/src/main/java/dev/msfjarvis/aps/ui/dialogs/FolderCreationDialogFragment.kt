@@ -5,11 +5,8 @@
 package dev.msfjarvis.aps.ui.dialogs
 
 import android.app.Dialog
-import android.content.Intent
 import android.os.Bundle
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
-import androidx.appcompat.app.AppCompatActivity
 import androidx.core.os.bundleOf
 import androidx.fragment.app.DialogFragment
 import androidx.lifecycle.lifecycleScope
@@ -20,41 +17,21 @@ import com.google.android.material.textfield.TextInputLayout
 import dev.msfjarvis.aps.R
 import dev.msfjarvis.aps.data.repo.PasswordRepository
 import dev.msfjarvis.aps.ui.crypto.BasePgpActivity
-import dev.msfjarvis.aps.ui.crypto.GetKeyIdsActivity
 import dev.msfjarvis.aps.ui.passwords.PasswordStore
+import dev.msfjarvis.aps.util.activityresult.GPGKeySelectAction
 import dev.msfjarvis.aps.util.extensions.commitChange
 import dev.msfjarvis.aps.util.extensions.requestInputFocusOnView
 import java.io.File
 import kotlinx.coroutines.launch
-import me.msfjarvis.openpgpktx.util.OpenPgpApi
 
 class FolderCreationDialogFragment : DialogFragment() {
 
     private lateinit var newFolder: File
 
-    private val keySelectAction = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode == AppCompatActivity.RESULT_OK) {
-            result.data?.getStringArrayExtra(OpenPgpApi.EXTRA_KEY_IDS)?.let { keyIds ->
-                val gpgIdentifierFile = File(newFolder, ".gpg-id")
-                gpgIdentifierFile.writeText(keyIds.joinToString("\n"))
-                val repo = PasswordRepository.getRepository(null)
-                if (repo != null) {
-                    lifecycleScope.launch {
-                        val repoPath = PasswordRepository.getRepositoryDirectory().absolutePath
-                        requireActivity().commitChange(
-                            getString(
-                                R.string.git_commit_gpg_id,
-                                BasePgpActivity.getLongName(gpgIdentifierFile.parentFile!!.absolutePath, repoPath, gpgIdentifierFile.name)
-                            ),
-                        )
-                        dismiss()
-                    }
-                }
-            }
-        }
-    }
+    private lateinit var keySelectAction: GPGKeySelectAction
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
+        keySelectAction = GPGKeySelectAction(requireActivity().activityResultRegistry, requireContext())
         val alertDialogBuilder = MaterialAlertDialogBuilder(requireContext())
         alertDialogBuilder.setTitle(R.string.title_create_folder)
         alertDialogBuilder.setView(R.layout.folder_dialog_fragment)
@@ -86,7 +63,23 @@ class FolderCreationDialogFragment : DialogFragment() {
         newFolder.mkdirs()
         (requireActivity() as PasswordStore).refreshPasswordList(newFolder)
         if (dialog.findViewById<MaterialCheckBox>(R.id.set_gpg_key).isChecked) {
-            keySelectAction.launch(Intent(requireContext(), GetKeyIdsActivity::class.java))
+            keySelectAction.selectKey().observe(viewLifecycleOwner) { keys ->
+                val gpgIdentifierFile = File(newFolder, ".gpg-id")
+                gpgIdentifierFile.writeText(keys.joinToString("\n"))
+                val repo = PasswordRepository.getRepository(null)
+                if (repo != null) {
+                    lifecycleScope.launch {
+                        val repoPath = PasswordRepository.getRepositoryDirectory().absolutePath
+                        requireActivity().commitChange(
+                            getString(
+                                R.string.git_commit_gpg_id,
+                                BasePgpActivity.getLongName(gpgIdentifierFile.parentFile!!.absolutePath, repoPath, gpgIdentifierFile.name)
+                            ),
+                        )
+                        dismiss()
+                    }
+                }
+            }
             return
         } else {
             dismiss()

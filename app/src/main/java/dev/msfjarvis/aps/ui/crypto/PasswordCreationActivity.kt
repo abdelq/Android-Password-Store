@@ -33,6 +33,7 @@ import dev.msfjarvis.aps.databinding.PasswordCreationActivityBinding
 import dev.msfjarvis.aps.ui.dialogs.OtpImportDialogFragment
 import dev.msfjarvis.aps.ui.dialogs.PasswordGeneratorDialogFragment
 import dev.msfjarvis.aps.ui.dialogs.XkPasswordGeneratorDialogFragment
+import dev.msfjarvis.aps.util.activityresult.GPGKeySelectAction
 import dev.msfjarvis.aps.util.autofill.AutofillPreferences
 import dev.msfjarvis.aps.util.autofill.DirectoryStructure
 import dev.msfjarvis.aps.util.crypto.GpgIdentifier
@@ -99,24 +100,7 @@ class PasswordCreationActivity : BasePgpActivity(), OpenPgpServiceConnection.OnB
         }
     }
 
-    private val gpgKeySelectAction = registerForActivityResult(StartActivityForResult()) { result ->
-        if (result.resultCode == RESULT_OK) {
-            result.data?.getStringArrayExtra(OpenPgpApi.EXTRA_KEY_IDS)?.let { keyIds ->
-                lifecycleScope.launch {
-                    val gpgIdentifierFile = File(PasswordRepository.getRepositoryDirectory(), ".gpg-id")
-                    withContext(Dispatchers.IO) {
-                        gpgIdentifierFile.writeText(keyIds.joinToString("\n"))
-                    }
-                    commitChange(getString(
-                        R.string.git_commit_gpg_id,
-                        getLongName(gpgIdentifierFile.parentFile!!.absolutePath, repoPath, gpgIdentifierFile.name)
-                    )).onSuccess {
-                        encrypt(encryptionIntent)
-                    }
-                }
-            }
-        }
-    }
+    private lateinit var keySelectAction: GPGKeySelectAction
 
     private fun File.findTillRoot(fileName: String, rootPath: File): File? {
         val gpgFile = File(this, fileName)
@@ -344,7 +328,21 @@ class PasswordCreationActivity : BasePgpActivity(), OpenPgpServiceConnection.OnB
                     }
                 }
             if (gpgIdentifiers.isEmpty()) {
-                gpgKeySelectAction.launch(Intent(this@PasswordCreationActivity, GetKeyIdsActivity::class.java))
+                keySelectAction = GPGKeySelectAction(activityResultRegistry, applicationContext)
+                keySelectAction.selectKey().observe(this@PasswordCreationActivity) { keys ->
+                    lifecycleScope.launch {
+                        val gpgId = File(PasswordRepository.getRepositoryDirectory(), ".gpg-id")
+                        withContext(Dispatchers.IO) {
+                            gpgId.writeText(keys.joinToString("\n"))
+                        }
+                        commitChange(getString(
+                            R.string.git_commit_gpg_id,
+                            getLongName(gpgId.parentFile!!.absolutePath, repoPath, gpgId.name)
+                        )).onSuccess {
+                            encrypt(encryptionIntent)
+                        }
+                    }
+                }
                 return@with
             }
             val keyIds = gpgIdentifiers.filterIsInstance<GpgIdentifier.KeyId>().map { it.id }.toLongArray()
